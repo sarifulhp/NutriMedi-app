@@ -1,0 +1,55 @@
+
+name: Build NutriMedi Android APK
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Find and extract project ZIP
+        run: |
+          ZIP=$(find . -maxdepth 2 -name "NutriMedi_Mobile_App.zip" | head -n 1)
+          if [ -z "$ZIP" ]; then
+            echo "Project ZIP not found"
+            exit 1
+          fi
+          unzip -o "$ZIP" -d extracted
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - name: Install dependencies
+        run: |
+          cd extracted/nutrimedi-app
+          npm install
+
+      - name: Generate Android project
+        run: |
+          cd extracted/nutrimedi-app
+          npx expo prebuild --platform android --no-install
+
+      - name: Build APK
+        run: |
+          cd extracted/nutrimedi-app/android
+          chmod +x gradlew
+          ./gradlew assembleDebug
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: NutriMedi-APK
+          path: extracted/nutrimedi-app/android/app/build/outputs/apk/debug/app-debug.apk

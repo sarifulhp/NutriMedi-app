@@ -14,7 +14,7 @@ jobs:
 
       - name: Find and extract project ZIP
         run: |
-          ZIP=$(find . -maxdepth 2 -name "NutriMedi_Mobile_App.zip" | head -n 1)
+          ZIP=$(find . -maxdepth 3 -name "NutriMedi_Mobile_App.zip" | head -n 1)
           if [ -z "$ZIP" ]; then
             echo "Project ZIP not found"
             exit 1
@@ -24,10 +24,10 @@ jobs:
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
 
       - name: Setup Java
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: 17
@@ -36,6 +36,42 @@ jobs:
         run: |
           cd extracted/nutrimedi-app
           npm install
+
+      - name: Repair Expo module publication versions
+        run: |
+          python3 - <<'PY'
+          import os, json
+
+          root = "extracted/nutrimedi-app/node_modules"
+          for current, dirs, files in os.walk(root):
+              dirs[:] = [d for d in dirs if d != ".git"]
+              if "expo-module.config.json" not in files:
+                  continue
+
+              config_path = os.path.join(current, "expo-module.config.json")
+              package_path = os.path.join(current, "package.json")
+
+              try:
+                  with open(config_path) as f:
+                      config = json.load(f)
+                  with open(package_path) as f:
+                      package = json.load(f)
+
+                  changed = False
+                  for module in config.get("modules", []):
+                      for project in module.get("projects", []):
+                          publication = project.get("publication")
+                          if isinstance(publication, dict) and not publication.get("version"):
+                              publication["version"] = package.get("version", "1.0.0")
+                              changed = True
+
+                  if changed:
+                      with open(config_path, "w") as f:
+                          json.dump(config, f, indent=2)
+                      print("Repaired:", package.get("name"))
+              except Exception as e:
+                  print("Skipped:", config_path, e)
+          PY
 
       - name: Generate Android project
         run: |

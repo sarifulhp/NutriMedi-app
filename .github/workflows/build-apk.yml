@@ -77,6 +77,10 @@ jobs:
                       with open(cp,"w") as f:
                           json.dump(config,f,indent=2)
                       print("Repaired:",package.get("name"))
+                            - name: Inspect Expo modules
+        run: |
+          cd extracted/nutrimedi-app
+          npx expo-modules-autolinking resolve --platform android
 
               except Exception as e:
                   print("Skipped:",cp,e)

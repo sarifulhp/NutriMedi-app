@@ -12,93 +12,72 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Extract project ZIP
+      - name: Extract NutriMedi ZIP
         run: |
           ZIP=$(find . -name "NutriMedi_Mobile_App.zip" | head -n 1)
+
           if [ -z "$ZIP" ]; then
-            echo "Project ZIP not found"
+            echo "NutriMedi ZIP not found"
             exit 1
           fi
+
           mkdir -p extracted
           unzip -o "$ZIP" -d extracted
 
-      - name: Setup Node
+      - name: Locate Expo project
+        run: |
+          PROJECT_DIR=$(find extracted -name package.json -not -path "*/node_modules/*" | while read f; do
+            if grep -q '"expo"' "$f"; then
+              dirname "$f"
+              break
+            fi
+          done)
+
+          if [ -z "$PROJECT_DIR" ]; then
+            echo "Expo project not found"
+            exit 1
+          fi
+
+          echo "PROJECT_DIR=$PROJECT_DIR" >> "$GITHUB_ENV"
+
+      - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: 22
-
-      - name: Setup Java
-        uses: actions/setup-java@v5
-        with:
-          distribution: temurin
-          java-version: 17
+          node-version: 20
 
       - name: Install dependencies
         run: |
-          cd extracted/nutrimedi-app
+          cd "$PROJECT_DIR"
           npm install
 
-      - name: Repair Expo publication config
+      - name: Prepare EAS APK configuration
         run: |
-          python3 - <<'PY'
-          import os,json
+          cd "$PROJECT_DIR"
 
-          root="extracted/nutrimedi-app/node_modules"
+          node -e '
+          const fs = require("fs");
+          const file = "eas.json";
+          let config = fs.existsSync(file)
+            ? JSON.parse(fs.readFileSync(file, "utf8"))
+            : {};
 
-          for current,dirs,files in os.walk(root):
-              if "expo-module.config.json" not in files:
-                  continue
+          config.cli = config.cli || {};
+          config.cli.version = config.cli.version || ">= 16.0.0";
 
-              cp=os.path.join(current,"expo-module.config.json")
-              pp=os.path.join(current,"package.json")
+          config.build = config.build || {};
+          config.build.preview = config.build.preview || {};
+          config.build.preview.android = config.build.preview.android || {};
+          config.build.preview.android.buildType = "apk";
 
-              try:
-                  with open(cp) as f:
-                      config=json.load(f)
-                  with open(pp) as f:
-                      package=json.load(f)
+          fs.writeFileSync(file, JSON.stringify(config, null, 2));
+          '
 
-                  changed=False
+      - name: Install EAS CLI
+        run: npm install -g eas-cli
 
-                  for module in config.get("modules",[]):
-                      for project in module.get("projects",[]):
-                          pub=project.get("publication")
-                          if isinstance(pub,dict) and not pub.get("version"):
-                              pub["version"]=package.get("version","1.0.0")
-                              changed=True
-
-                  for project in config.get("android",{}).get("projects",[]):
-                      pub=project.get("publication")
-                      if isinstance(pub,dict) and not pub.get("version"):
-                          pub["version"]=package.get("version","1.0.0")
-                          changed=True
-
-                  if changed:
-                      with open(cp,"w") as f:
-                          json.dump(config,f,indent=2)
-                      print("Repaired:",package.get("name"))
-                            - name: Inspect Expo modules
+      - name: Build APK with Expo EAS
+        env:
+          EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
         run: |
-          cd extracted/nutrimedi-app
-          npx expo-modules-autolinking resolve --platform android
-
-              except Exception as e:
-                  print("Skipped:",cp,e)
-          PY
-
-      - name: Generate Android project
-        run: |
-          cd extracted/nutrimedi-app
-          npx expo prebuild --platform android --no-install
-
-      - name: Build APK
-        run: |
-          cd extracted/nutrimedi-app/android
-          chmod +x gradlew
-          ./gradlew assembleDebug
-
-      - name: Upload APK
-        uses: actions/upload-artifact@v4
-        with:
-          name: NutriMedi-APK
-          path: extracted/nutrimedi-app/android/app/build/outputs/apk/debug/app-debug.apk
+          cd "$PROJECT_DIR"
+          eas build --platform android --profile preview --non-interactive
